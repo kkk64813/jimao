@@ -3,3 +3,5 @@ srv*.log
 __pycache__/
 *.pyc
 几猫.html
+worker-代码.js
+worker-token.txt
