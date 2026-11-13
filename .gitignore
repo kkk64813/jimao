@@ -1,0 +1,5 @@
+*.log
+srv*.log
+__pycache__/
+*.pyc
+几猫.html
