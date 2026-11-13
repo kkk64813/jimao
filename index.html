@@ -46,6 +46,7 @@
 </div>
 <script>
 var API = "https://sealnote-api.mgjack13.workers.dev";
+var GATE = "https://jimao-gate.mgjack13.workers.dev";
 var ITER = 130000;
 
 var msg = document.getElementById("msg");
@@ -93,8 +94,21 @@ async function run() {
     say("驗證失敗（" + res.status + "）。", true); return;
   }
 
-  // 2. 同一組密碼解開密文。就算有人繞過驗證，沒有密碼也拿不到內容
+  var token = "";
+  try { token = (await res.json()).token || ""; } catch (e) { token = ""; }
+  if (!token) {
+    btn.disabled = false; bar.className = "";
+    say("驗證回應異常，請重試。", true); return;
+  }
+
+  // 2. 向後台換取解密鑰匙：只有驗證通過的登入才拿得到
   try {
+    say("取得解密鑰匙…");
+    var gateRes = await fetch(GATE, { headers: { Authorization: "Bearer " + token }, cache: "no-store" });
+    if (!gateRes.ok) throw new Error("gate " + gateRes.status);
+    var K = (await gateRes.text()).trim();
+    if (K.length !== 64) throw new Error("key len " + K.length);
+
     say("解密中…");
     var keyMeta = await (await fetch("g.key", { cache: "no-store" })).text();
     var lines = keyMeta.trim().split(/\r?\n/);
@@ -102,7 +116,7 @@ async function run() {
     var nonce = b64ToBytes(lines[1]);
 
     var km = await crypto.subtle.importKey(
-      "raw", new TextEncoder().encode(p), "PBKDF2", false, ["deriveKey"]);
+      "raw", new TextEncoder().encode(K), "PBKDF2", false, ["deriveKey"]);
     var key = await crypto.subtle.deriveKey(
       { name: "PBKDF2", salt: salt, iterations: ITER, hash: "SHA-256" },
       km, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
@@ -114,7 +128,7 @@ async function run() {
     document.open(); document.write(txt); document.close();
   } catch (e) {
     btn.disabled = false; bar.className = "";
-    say("檔案解密失敗，可能 g.bin / g.key 不完整，或密碼已改過需要重新打包。", true);
+    say("進入失敗：" + (e && e.message ? e.message : "未知錯誤") + "\n鑰匙或密文可能不匹配。", true);
   }
 }
 
