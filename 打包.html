@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>幾貓 · 加密打包</title>
+<style>
+  html,body{margin:0;height:100%;background:#14161a;color:#e8e6e1;
+    font-family:-apple-system,"Segoe UI","Microsoft JhengHei",sans-serif;}
+  #w{max-width:560px;margin:0 auto;padding:40px 26px;box-sizing:border-box;}
+  h1{font-size:15px;font-weight:600;letter-spacing:.2em;color:#8f959d;margin:0 0 6px;}
+  .s{font-size:12px;color:#565c64;margin:0 0 30px;}
+  label{display:block;font-size:11px;letter-spacing:.12em;color:#6b727a;margin:22px 0 8px;}
+  input[type=file],input[type=password]{width:100%;box-sizing:border-box;padding:13px 14px;
+    font-size:14px;background:#1c1f25;border:1px solid #2a2f36;border-radius:7px;color:#e8e6e1;outline:none;}
+  input[type=password]{font-size:16px;}
+  input:focus{border-color:#4d545c;}
+  button{width:100%;margin-top:26px;padding:15px;font-size:15px;font-weight:600;letter-spacing:.1em;
+    background:#e8e6e1;color:#14161a;border:0;border-radius:7px;cursor:pointer;}
+  button:disabled{opacity:.38;cursor:default;}
+  #log{margin-top:24px;font-size:13px;line-height:1.9;color:#878d95;white-space:pre-wrap;}
+  #log.ok{color:#7fb069;} #log.bad{color:#c8796c;}
+</style>
+</head>
+<body>
+<div id="w">
+  <h1>幾 貓 ・ 加 密 打 包</h1>
+  <p class="s">選入遊戲檔 → 輸入你的 SealNote 密碼 → 產生 g.bin 與 g.key。密碼不會離開這台電腦。</p>
+
+  <label>① 選擇遊戲檔案</label>
+  <input id="f" type="file" accept=".html,text/html">
+
+  <label>② SealNote 密碼</label>
+  <input id="p1" type="password" placeholder="輸入時可見，請自行遮蔽畫面">
+
+  <label>③ 再輸入一次</label>
+  <input id="p2" type="password">
+
+  <button id="go">加 密 並 下 載</button>
+  <div id="log"></div>
+</div>
+<script>
+var ITER = 130000;
+var fEl = document.getElementById("f"),
+    p1El = document.getElementById("p1"),
+    p2El = document.getElementById("p2"),
+    btn = document.getElementById("go"),
+    log = document.getElementById("log");
+
+function say(t, cls) { log.textContent = t; log.className = cls || ""; }
+
+function b64(bytes) {
+  var s = "";
+  for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s);
+}
+
+function download(name, blob) {
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+}
+
+async function run() {
+  var file = fEl.files[0];
+  if (!file) { say("先選一個檔案。", "bad"); return; }
+  var pw = p1El.value;
+  if (pw !== p2El.value) { say("兩次密碼不一致。", "bad"); return; }
+  if (pw.length < 6) { say("密碼至少 6 碼。", "bad"); return; }
+
+  btn.disabled = true;
+  say("讀取檔案…");
+  var plain = await file.arrayBuffer();
+
+  var salt = crypto.getRandomValues(new Uint8Array(16));
+  var nonce = crypto.getRandomValues(new Uint8Array(12));
+
+  say("派生密鑰（PBKDF2 13 萬輪，約需一兩秒）…");
+  var km = await crypto.subtle.importKey("raw", new TextEncoder().encode(pw), "PBKDF2", false, ["deriveKey"]);
+  var key = await crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt: salt, iterations: ITER, hash: "SHA-256" },
+    km, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+
+  say("加密中…");
+  var ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, key, plain);
+
+  // 自檢：立刻用同一把鑰匙解回去比對
+  var back = await crypto.subtle.decrypt({ name: "AES-GCM", iv: nonce }, key, ct);
+  var same = back.byteLength === plain.byteLength;
+  if (same) {
+    var A = new Uint8Array(plain), B = new Uint8Array(back);
+    for (var i = 0; i < A.length; i++) if (A[i] !== B[i]) { same = false; break; }
+  }
+
+  download("g.bin", new Blob([ct], { type: "application/octet-stream" }));
+  var meta = b64(salt) + "\n" + b64(nonce) + "\n";
+  download("g.key", new Blob([meta], { type: "text/plain" }));
+
+  btn.disabled = false;
+  if (same) {
+    say("完成。\n\ng.bin  " + (ct.byteLength / 1024).toFixed(0) + " KB   → 已開始下載\ng.key  → 已開始下載\n\n自檢通過：這組檔案配這組密碼可正確解回原文。\n把 g.bin 和 g.key 兩個檔交給我推上去即可。", "ok");
+  } else {
+    say("自檢失敗，請重試。", "bad");
+  }
+}
+
+btn.onclick = run;
+</script>
+</body>
+</html>
